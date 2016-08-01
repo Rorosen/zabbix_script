@@ -65,9 +65,13 @@ class Zabbix_Api:
                 # Group_Flag = True if GroupName else Group_Flag
                 for h in Host_List:
                     host_id = self.z.do_request('host.get',
-                                                params={'output': ['hostid'], "%s" % Action: {'host': h}})
-                    Host_ID.extend(host_id['result'])
+                                                params={'output': ['host', 'hostid'], "%s" % Action: {'host': h}})
+                    res = sorted(host_id['result'], key=lambda x: int(x['host'].split('-')[-1]))
+                    for i in res:
+                        del i['host']
+                        Host_ID.append(i)
                 return Host_ID
+
             elif Template_List:
                 for t in Template_List:
                     if Macros_Flag:
@@ -108,10 +112,13 @@ class Zabbix_Api:
             Only_Host_ID = map(lambda x: x.values()[0], Host_ID)
             for hostid in Only_Host_ID:
                 re_graphid = self.z.do_request('graph.get',
-                                               params={'output': ['graphid', 'name'],
-                                                       'selectGraphs': ['graphid', 'name'], 'hostids': hostid,
-                                                       'softfield': 'name', 'filter': {'name': GraphName}})
-                Graph_ID.append(re_graphid['result'][0]['graphid'])
+                                               params={'output': ['graphid'],
+                                                       'hostids': hostid,
+                                                       'softfield': 'graphid', 'search': {'name': GraphName}})
+                if re_graphid['result']:
+                    Graph_ID.append(re_graphid['result'][0]['graphid'])
+                else:
+                    exit('Some host not have the graph: "%s" !' % GraphName)
             for graph in Graph_ID:
                 Graph_List.append({
                     'resourcetype': '0',
@@ -133,7 +140,6 @@ class Zabbix_Api:
                 if x == int(Columns):
                     x = 0
                     y += 1
-
             return Graph_ID, Graph_List
         except Exception as e:
             print(e)
@@ -146,19 +152,23 @@ class Zabbix_Api:
             else:
                 vsize = (len(Graph_ID) / Columns) + 1
 
-            Screen_ID = self.Get_ID(ScreenName=ScreenName)
+            Screen_ID = self.Get_ID(ScreenName=ScreenName)[0]
             if Screen_ID:
-                # 如果存在则先删除再创建
-                self.z.do_request('screen.delete', params=Screen_ID)
-            # 如果不存在则直接创建
-            re = self.z.do_request('screen.create',
-                                   params={'name': ScreenName, 'hsize': Columns, 'vsize': vsize,
-                                           'screenitems': Graph_List})
-            if re['result']['screenids']:
-                print('The screen name: "%s" create succeed!' % ScreenName)
-                sys.exit(0)
-            exit('Screen create failed')
-
+                re = self.z.do_request('screen.update', params={'screenid': Screen_ID,
+                                                                'name': ScreenName,
+                                                                'screenitems': Graph_List,
+                                                                'hsize': Columns,
+                                                                'vsize': vsize})
+                if re['result']['screenids']:
+                    print('The screen : "%s" has been update!' % ScreenName)
+            else:
+                re = self.z.do_request('screen.create',
+                                       params={'name': ScreenName, 'hsize': Columns, 'vsize': vsize,
+                                               'screenitems': Graph_List})
+                if re['result']['screenids']:
+                    print('The screen name: "%s" create succeed!' % ScreenName)
+                    sys.exit(0)
+                exit('Screen create failed')
         except Exception as e:
             print(e)
 
@@ -256,27 +266,27 @@ class Zabbix_Api:
 
     def Disable_Host(self, HostName=None, Method=None):
         status = 0
+        data = []
         try:
             status = 1 if Method == 'disable' else status
             Hostids = self.Get_ID(HostName=HostName)
             if not Hostids:
                 exit('"%s" not exists!' % HostName)
-            Only_Host_ID = map(lambda x: x.values()[0], Hostids)
-            for host in Only_Host_ID:
-                re = self.z.do_request('host.update', params={'hostid': host, 'status': status})
-                if re['result']['hostids']:
-                    print('hosts has been "%s" !' % Method)
-                    sys.exit(0)
+            for h in Hostids:
+                re = self.z.do_request('host.massupdate', params={'hosts': h, 'status': status})
+                data.append(re['result']['hostids'])
+            if not data:
                 exit('"%s" failed!' % Method)
+            print('hosts has been "%s" !' % Method)
         except Exception as e:
             print(e)
 
     def main(self):
         if len(sys.argv) == 1:
-            print(parse.print_help())
+            parse.print_help()
         else:
             args = parse.parse_args()
-            Method = ['delete', 'disable', 'enable', 'replace', 'remove', 'add']
+            Method = ['delete', 'disable', 'enable', 'replace', 'remove', 'add', 'create']
             # print(args)
             if args.idc == 'xg':
                 self.__init__(idc='xg')
